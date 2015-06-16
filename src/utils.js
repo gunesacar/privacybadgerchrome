@@ -209,6 +209,7 @@ var Utils = exports.Utils = {
    * @param {String} origin The origin to disable the PB for
    **/
   disablePrivacyBadgerForOrigin: function(origin){
+    Utils.disablePluginBlockingForOrigin(origin);
     if(localStorage.disabledSites === undefined){
       localStorage.disabledSites = JSON.stringify([origin]);
       return;
@@ -226,6 +227,7 @@ var Utils = exports.Utils = {
    * @param {String} origin The origin to disable the PB for
    **/
   enablePrivacyBadgerForOrigin: function(origin){
+    Utils.enablePluginBlockingForOrigin(origin);
     if(localStorage.disabledSites === undefined){
       return;
     }
@@ -332,6 +334,198 @@ var Utils = exports.Utils = {
       // TODO: Do we need separate functions for other supercookie vectors?
       // Let's wait until we implement them in the content script
     );
+  },
+
+
+  /**
+   * Block/unblock plugins by adjusting Chrome's content setting
+   */
+  setPluginBlockingState: function(pluginId, newSetting, pattern) {
+    console.log("setPluginBlockingState", pluginId, newSetting, pattern);
+    chrome.contentSettings.plugins.set({
+      primaryPattern: pattern || "<all_urls>",
+      resourceIdentifier: {
+        id: pluginId
+      },
+      setting: newSetting
+    }, function(){
+      if (chrome.runtime.lastError) {
+        console.error("Error while setting the rule for plugin",
+            chrome.runtime.lastError.message, pluginId, pattern, newSetting);
+      }else if(!pattern){ // change the global setting for this plugin
+        var blockedPlugins = Utils.getStoredPluginBlockingStates();
+        blockedPlugins[pluginId] = newSetting === "allow" ? false : true;
+        localStorage.setItem("blockedPlugins", JSON.stringify(blockedPlugins));
+      }else if(newSetting == "allow"){
+        // keep a record of origins where plugins are allowed,
+        // if the user removes the plugin exception we should disable our rule as well.
+        var pluginWhitelistedOrigins = JSON.parse(localStorage.getItem("pluginWhitelistedOrigins")) || {};
+        pluginWhitelistedOrigins[pattern] = pluginWhitelistedOrigins[pattern] || [];
+        if (!pluginId in pluginWhitelistedOrigins[pattern]){
+          pluginWhitelistedOrigins[pattern].push(pluginId);
+          localStorage.setItem("pluginWhitelistedOrigins", JSON.stringify(pluginWhitelistedOrigins));
+        }
+      }
+    });
+  },
+
+  /**
+   * Get installed plugins and pass them to callback function
+   */
+  getInstalledPlugins: function(callback) {
+    chrome.contentSettings.plugins.getResourceIdentifiers(function(plugins) {
+      if (chrome.runtime.lastError) {
+        console.error("Error while getting installed plugins:",
+            chrome.runtime.lastError.message);
+        callback([], chrome.runtime.lastError);
+        return;
+      }
+      callback(plugins, undefined);
+    });
+  },
+
+  /**
+   * Get plugin state (blocked, allowed etc.) from Chrome and pass it to callback function
+   */
+  getPluginBlockedState: function(pluginId, url, callback) {
+    var details = {};
+    if(pluginId){
+      details = {
+          primaryUrl: url,
+          resourceIdentifier: {
+            id: pluginId
+          }
+        }
+    }else{
+      details = {
+        primaryUrl: url
+      }
+    }
+    chrome.contentSettings.plugins.get(details, function(details){
+      if (chrome.runtime.lastError) {
+        console.error("Error while getting plugin state from Chrome:",
+            pluginId, chrome.runtime.lastError.message);
+        callback(undefined, chrome.runtime.lastError);
+        return;
+      }else{
+        console.log("getPluginBlockedState result:", pluginId, url, details);
+        callback(details.setting, undefined);
+      }
+    });
+  },
+
+
+  /**
+   * Get blocked plugins from local Storage
+   * @returns {*|{}} Array of blocked plugins
+   */
+  registerBlockedPluginsRulesFromStorage: function() {
+    var blockedPlugins = Utils.getBlockedPluginsFromStorage();
+    Array.prototype.map.call(blockedPlugins, function (blockedPlugin) {
+      Utils.setPluginBlockingState(blockedPlugin, "block");
+    });
+  },
+  /**
+   * Get blocked plugins from local Storage
+   * @returns {*|{}} Array of blocked plugins
+   */
+  getBlockedPluginsFromStorage: function() {
+    var blockedPlugins = [];
+    var pluginBlockingStates = JSON.parse(localStorage.getItem("blockedPlugins")) || {};
+    for(var plugin in pluginBlockingStates){
+      if(pluginBlockingStates[plugin]){ // true means the plugin is blocked
+        blockedPlugins.push(plugin);
+      }
+    }
+    return blockedPlugins;
+  },
+
+  /**
+   * Get Plugin blocking settings from local Storage
+   * @returns {*|{}} Dict with plugin blocking states
+   */
+  getStoredPluginBlockingStates: function() {
+    return JSON.parse(localStorage.getItem("blockedPlugins")) || {};
+  },
+
+  /**
+   * Get Plugin blocking settings from local Storage
+   * @returns {*|{}} Dict with plugin blocking states
+   */
+  clearPluginRules: function(keepLocalStorage) {
+    chrome.contentSettings.plugins.clear(
+      {}, function(){
+        if (chrome.runtime.lastError) {
+          console.error('Error clearing plugin blocking rules');
+          return;
+        }
+        console.log('Plugin blocking rules cleared successfully');
+      });
+    if (!keepLocalStorage){
+      localStorage.setItem("blockedPlugins", JSON.stringify({}));
+    }
+  },
+
+  mimickUserPluginSetting: function(strUrl, blockedPlugins){
+    blockedPlugins = blockedPlugins || Utils.getBlockedPluginsFromStorage();
+    if(!blockedPlugins.length){
+      return;
+    }
+    var pluginWhitelistedOrigins = JSON.parse(localStorage.getItem("pluginWhitelistedOrigins")) || {};
+    var url = new URI(strUrl);
+    var pattern = url.prePath +"/*";  // pattern matching this scheme and host
+    Utils.getPluginBlockedState("", strUrl, function(setting, error){ // read the plugin setting for this url
+      if(!error){
+        if(setting == "allow" && !(pattern in pluginWhitelistedOrigins)){ // if user's setting is to allow, PB should unblock plugins on this host
+          blockedPlugins.forEach(function(blockedPlugin) {
+            Utils.setPluginBlockingState(blockedPlugin, "allow", pattern);
+          });
+        }else if(setting == "block" && (pattern in pluginWhitelistedOrigins)){
+          // remove the origin from the plugin whitelisted origins
+          blockedPlugins.forEach(function(blockedPlugin) {
+            Utils.setPluginBlockingState(blockedPlugin, "block", pattern);
+          });
+          delete pluginWhitelistedOrigins[pattern];
+          localStorage.setItem("pluginWhitelistedOrigins", JSON.stringify(pluginWhitelistedOrigins));
+        }
+      }
+
+    });
+  },
+
+  /**
+   * Disable plugin blocking settings for the given origin
+   */
+  disablePluginBlockingForOrigin: function(origin) {
+    var blockedPlugins = Utils.getBlockedPluginsFromStorage();
+    if(!blockedPlugins.length){
+      return;
+    }
+    var schemes = ["http://", "https://"];
+    schemes.forEach(function(scheme) {
+      var url = scheme + origin + "/";  // url is required to look up the user's setting, we should try both http and https
+      Utils.mimickUserPluginSetting(url, blockedPlugins);
+    });
+  },
+
+
+  /**
+   * Enable plugin blocking settings for the origin of the given url
+   */
+  enablePluginBlockingForOrigin: function(origin) {
+    console.log("Enabling plugin blocking for", origin);
+    // we should have registered a whitelist rule for this domain when the PB was disabled.
+    // Since there's no way to clear/ deregister rules in the contentsettings api
+    // we'll clear all rules and register new ones for all the blocked plugins and whitelisted sites
+    Utils.clearPluginRules(true);
+    Utils.registerBlockedPluginsRulesFromStorage();
+    var disabledOrigins = JSON.parse(localStorage.getItem("disabledSites"));
+    disabledOrigins.forEach(function(disabledOrigin){
+      if (disabledOrigin != origin){
+        Utils.disablePluginBlockingForOrigin(disabledOrigin);
+      }
+    });
+    // TODO: register new allow rules for pluginWhitelistedOrigins.
   },
 
   /**

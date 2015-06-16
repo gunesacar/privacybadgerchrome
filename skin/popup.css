@@ -234,7 +234,7 @@ font-size: 16px;
   background: url("/skin/background.png");
   transition: opacity .1s ease;
 }
-  div#overlay.active {
+div#overlay.active {
     z-index: 31;
     opacity: 1;}
 #error_input {
@@ -275,4 +275,34 @@ font-size: 16px;
 }
 .hidden {
   display: none;
+}
+#plugin-switch{
+	width: 100px;
+}
+
+#report_text {
+  font-size: 16px;
+  font-weight: bold;
+  margin-top:40px;}
+#report_button {
+  margin-top: 10px;
+  margin-right: 5px;}
+
+#plugin-switch{
+	width: 100px;
+}
+.plugin-desc{
+	width: 300px;
+	float:left;
+}
+.plugin-div{
+	padding: 5px;
+	border-bottom: 1px solid silver;
+}
+#plugin-controls .plugin-selector{
+  padding: 3px;
+}
+
+#plugin-controls > div:first-child{
+  border-top: 1px solid silver;
 }

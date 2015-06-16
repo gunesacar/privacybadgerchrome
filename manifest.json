@@ -14,7 +14,8 @@
     "unlimitedStorage", 
     "storage", 
     "cookies", 
-    "privacy"
+    "privacy",
+    "contentSettings"
   ], 
   "background": {
     "scripts": [

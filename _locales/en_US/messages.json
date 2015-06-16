@@ -53,6 +53,18 @@
     "options_social_settings": {
         "message": "Social Widget Settings"
     },
+    "options_plugin_allow": {
+        "message": "Allow"
+    },
+    "options_plugin_block": {
+        "message": "Block"
+    },
+    "options_plugin_blocking": {
+        "message": "Plugin Blocking"
+    },
+    "options_plugin_blocking_explanation": {
+        "message": "Plugins can be used to track you with supercookies and fingerprinting. You can selectively block plugins here. You will still be able to run these plugins by right-clicking on the blocked content."
+    },
     "options_title": {
         "message": "Privacy Badger Options"
     },

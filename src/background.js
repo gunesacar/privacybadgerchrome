@@ -168,6 +168,8 @@ function setDefaultOptions() {
 // Upgrade options before we do anything else.
 setDefaultOptions();
 
+initPluginBlocking();
+
 /**
  * Wrappers to be called by popup.js
  * Gets the action defined for the given tab/origin
@@ -266,6 +268,39 @@ function changePrivacySettings() {
   chrome.privacy.websites.hyperlinkAuditingEnabled.set({'value': false, 'scope': 'regular'});
 }
 
+function removeUninstalledPluginsFromLocalStorage(blockedPlugins, installedPlugins){
+  var installedPluginIds = Array.prototype.map.call(installedPlugins, function (pluginObj) {
+    return pluginObj.id;
+  });
+  for(var blockedPlugin in blockedPlugins){
+    if (installedPluginIds.indexOf(blockedPlugin) < 0){ // plugin is not installed anymore
+      console.log("Plugin is uninstalled, removing the blocking setting from localStorage", blockedPlugin);
+      delete blockedPlugins[blockedPlugin];  // remove from blockedPlugins
+    }
+  }
+}
+
+function initPluginBlocking(){
+  var blockedPlugins = Utils.getStoredPluginBlockingStates(); // get blocking states from localStorage
+  if (Object.keys(blockedPlugins).length==0){
+    Utils.clearPluginRules(); // clear all the plugin rules previously set by PB
+  }
+  Utils.getInstalledPlugins(function(installedPlugins, error){ // get installed plugins from Chrome
+    if(error !== undefined){
+      return;
+    }
+    for(var i=0; i < installedPlugins.length; i++){
+      var pluginId = installedPlugins[i].id;
+      if(!(pluginId in blockedPlugins)){ // we don't know about this plugin, either we're initializing or plugin is newly installed
+        console.log("Detected a new plugin, will allow by default", pluginId);
+        blockedPlugins[pluginId] = false;
+      }
+    }
+    removeUninstalledPluginsFromLocalStorage(blockedPlugins, installedPlugins);
+    localStorage.setItem("blockedPlugins", JSON.stringify(blockedPlugins));
+  });
+}
+
 /**
  * This function is called on an extension update. It will add the default
  * filter subscription if necessary.Also init the local DB and show the first use page
@@ -327,6 +362,9 @@ function addSubscription(prevVersion) {
   if (!supercookieDomains){
     localStorage.setItem("supercookieDomains", JSON.stringify({}));
   }
+
+  // Init or update permanent store for plugin blocking (handle cases like plugin install/uninstall)
+  initPluginBlocking();
 
   // Add a permanent store for blocked domains to recheck DNT compliance 
   // TODO: storing this in localStorage makes it synchronous, but we might 
@@ -823,6 +861,30 @@ function updateBadge(tabId){
   chrome.browserAction.setBadgeText({tabId: tabId, text: numBlocked + ""});
 }
 
+function handlePluginBlocking(details){
+  if (details.tabId == -1 || details.frameId > 0){
+    return {};
+  }
+  /* Unfortunately, there's no way to get a list of plugin exceptions set by the user.
+   * Here we do a hack which will only work for users who blocked plugins in
+   * chrome://settings/content.
+   *
+   * Read the plugin setting for a non-existing domain to get the global plugin setting.
+   * If the user blocked the plugins, call mimickUserPluginSetting to allow
+   * plugins if the user added an exception for the visited page
+   * (via chrome://settings/contentExceptions#plugins.)
+   *
+   * If user's global setting is to allow, we have no way to infer user's plugin
+   * exceptions. If he/she sets an exception,we'll disregard it - which is horrible UX.
+   */
+  Utils.getPluginBlockedState("", "https://nonexisting-domain.nnnn", function(setting, error){
+    if(!error && setting == "block"){  // TODO explain why it doesn't work
+      Utils.mimickUserPluginSetting(details.url);
+    }
+  });
+}
+
+chrome.webNavigation.onBeforeNavigate.addListener(handlePluginBlocking, {url: [{schemes: ["http", "https"]}]});
 /**
  * Checks conditions for updating page action badge and call updateBadge
  * @param {Object} details details object from onBeforeRequest event
