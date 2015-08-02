@@ -136,7 +136,8 @@ function onTabReplaced(addedTabId, removedTabId){
  */
 function onFilterChange() {
   onFilterChangeTimeout = null;
-  chrome.webRequest.handlerBehaviorChanged();
+  console.log("won't allow handlerBehaviorChanged");
+  //chrome.webRequest.handlerBehaviorChanged();
 }
 
 /**
@@ -169,11 +170,17 @@ function onBeforeRequest(details){
   if (type == "main_frame"){
     forgetTab(details.tabId);
   }
+  var t0 = performance.now();
+  var ff = 0;
+  for (var i=0; i<10000000;i++){
+    ff += i/Math.random();
+  }
+  console.log(performance.now() - t0, ff);
 
   if (type == "main_frame" || type == "sub_frame"){
     recordFrame(details.tabId, details.frameId, details.parentFrameId, details.url);
   }
-
+  //onFilterChange();
   // read the supercookie state from localStorage and store it in frameData
   var frameData = getFrameData(details.tabId, details.frameId);
   if (frameData && !("superCookie" in frameData)){ // check if we already read localStorage for this frame
